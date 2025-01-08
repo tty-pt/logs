@@ -101,14 +101,15 @@ export default class Logs {
 
     const {
       url,
+      streamUrl,
       fetch = globalThis.fetch,
-      streaming = false,
+      stream = false,
       restInterval = 3000,
       fields = {},
-      open = () => {},
+      streamOpen = (streamUrl) => new WebSocket(streamUrl),
       limit = MAX_FETCH_LOGS,
       transform = a => a,
-      streamTransform = a => a,
+      streamTransform = msg => JSON.parse(msg ?? {}),
       types: optTypes = types,
       timeLabel = "timestamp",
     } = options;
@@ -117,7 +118,8 @@ export default class Logs {
     this.fetch = fetch;
     this.restInterval = restInterval;
     this.url = url;
-    this.streaming = streaming;
+    this.streamUrl = streamUrl;
+    this.stream = stream;
     this.fields = {
       fromDate: {},
       toDate: {},
@@ -126,7 +128,7 @@ export default class Logs {
     };
     this.timeLabel = timeLabel;
     this.types = optTypes;
-    this.open = open;
+    this.streamOpen = streamOpen;
     this.limit = limit;
     this.transform = transform;
     this.streamTransform = streamTransform;
@@ -167,8 +169,7 @@ export default class Logs {
       + (paramPrefix && orphanString ? "&" : "")
       + orphanString;
     try {
-      const response = await this.fetch(path);
-      const data = response?.data || [];
+      const data = await this.fetch(path) || [];
       const newLogs = data.map(this.transform);
       return newLogs;
     } catch (e) {
@@ -182,11 +183,11 @@ export default class Logs {
     this.tree = new IntervalTree();
     this.update();
 
-    if (this.streaming) {
-      const sock = this.open();
+    if (this.stream) {
+      const sock = this.streamOpen();
       sock.onmessage = (msg) => {
-        const item = this.websocketTransform(JSON.parse(msg?.data ?? {}));
-        this.pushInterval([this.transform(item, 0, [item], 0.000001)], true);
+        const item = this.streamTransform(msg);
+        this.pushInterval([this.transform(item, 0, [item], true)], true);
         this.update();
       };
 
@@ -206,17 +207,16 @@ export default class Logs {
         let orphan = this.orphans.lowerBound({ [this.timeLabel]: low }).next();
 
         // remove orphans intersecting interval
-        // FIXME: I think something is weird. shouldn't it be enough
-        // to check if (orphan && orphan[this.timeLabel] <= high) ?
-        while (orphan && orphan[this.timeLabel] >= low && orphan[this.timeLabel] <= high) {
-          removedOrphans.push(orphan);
-          this.orphans.remove(orphan);
-          orphan = this.orphans.lowerBound({ [this.timeLabel]: low }).next();
-        }
+        if (orphan[this.timeLabel] >= low)
+          while (orphan && orphan[this.timeLabel] <= high) {
+            removedOrphans.push(orphan);
+            this.orphans.remove(orphan);
+            orphan = this.orphans.lowerBound({ [this.timeLabel]: low }).next();
+          }
 
         this.pushInterval(intervalValue);
-        // if (removedOrphans.length)
-        //   console.log("removed orphans", removedOrphans, "because they intersect", intervalValue, low, high);
+        if (removedOrphans.length)
+          console.log("removed orphans", removedOrphans);
         this.update();
       }
     } catch (e) {
