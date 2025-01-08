@@ -1,12 +1,21 @@
 import IntervalTree from "@flatten-js/interval-tree";
+import { BinTree } from "bintrees";
 
 const MAX_FETCH_LOGS = 20000;
 const END_TIMES = 8640000000000000;
 const WHOLE_TIME = [-END_TIMES, END_TIMES];
 
 function unparseList(label, values) {
-  return values?.length
-    ? label + "=" + values.map((el) => el.label).join()
+  const keys = Object.keys(values ?? {});
+  return keys.length
+    ? label + "=" + keys.join(",")
+    : "";
+}
+
+function unparseTags(_label, values) {
+  const keys = Object.keys(values ?? {});
+  return keys.length
+    ? keys.map((key) => key + "=True").join("&")
     : "";
 }
 
@@ -55,7 +64,7 @@ export const types = {
     },
   }, tags: {
     default: {},
-    unparse: unparseList,
+    unparse: unparseTags,
     filter: function (_field, filter, item) {
       return matchTags(filter, item) || noSelection(filter);
     },
@@ -63,7 +72,7 @@ export const types = {
     default: "",
     unparse: unparseString,
     filter: function (field, filter, _item) {
-      return (field || "").includes(filter);
+      return !filter || (field || "").includes(filter);
     },
   }, fromDate: {
     default: null,
@@ -101,6 +110,7 @@ export default class Logs {
       transform = a => a,
       streamTransform = a => a,
       types: optTypes = types,
+      timeLabel = "timestamp",
     } = options;
 
     singleton = this;
@@ -114,6 +124,7 @@ export default class Logs {
       limit: {},
       ...fields,
     };
+    this.timeLabel = timeLabel;
     this.types = optTypes;
     this.open = open;
     this.limit = limit;
@@ -129,6 +140,8 @@ export default class Logs {
     this.beginning = -END_TIMES;
     this.unbound = 0;
     this.subscriptionTree = new IntervalTree();
+    this.orphans = new BinTree((a, b) => a[this.timeLabel] - b[this.timeLabel]);
+    this.orphanQueries = {};
     this.refresh();
   }
 
@@ -148,14 +161,21 @@ export default class Logs {
     ).filter((a) => !!a).join("&");
   }
 
-  async _getLogs(params) {
-    const path = this.url + "?"
-      + this.getParamString({ limit: this.limit, ...params });
-
-    const response = await this.fetch(path);
-    const data = response?.data || [];
-    const newLogs = data.map(this.transform);
-    return newLogs;
+  async _getLogs(fromDate, toDate, orphanString = "") {
+    const paramPrefix = this.getParamString({ limit: this.limit, fromDate, toDate });
+    const path = this.url + "?" + paramPrefix
+      + (paramPrefix && orphanString ? "&" : "")
+      + orphanString;
+    try {
+      const response = await this.fetch(path);
+      const data = response?.data || [];
+      const newLogs = data.map(this.transform);
+      return newLogs;
+    } catch (e) {
+      console.info("@tty-pt/logs Logs._getLogs caught:", e);
+      // delete this.orphanQueries[orphanString];
+      return [];
+    }
   }
 
   async refresh() {
@@ -170,36 +190,68 @@ export default class Logs {
         this.update();
       };
 
-      this.shiftInterval(await this._getLogs({
-        fromDate: this.getLastTo(),
-        toDate: null,
-      }));
-
+      this.shiftInterval(await this._getLogs(this.getLastTo(), null));
       this.update();
-    } else
-      this.getLogs();
+    }
+    else this.getLogs();
   }
 
   async getLogs() {
     try {
-      this.pushInterval(await this._getLogs({
-        fromDate: this.getLastTo(),
-        toDate: null,
-      }));
-      this.update();
+      const intervalValue = await this._getLogs(this.getLastTo(), null);
+      const removedOrphans = [];
+
+      if (intervalValue.length) {
+        const [low, high] = this.getKey(intervalValue);
+        let orphan = this.orphans.lowerBound({ [this.timeLabel]: low }).next();
+
+        // remove orphans intersecting interval
+        // FIXME: I think something is weird. shouldn't it be enough
+        // to check if (orphan && orphan[this.timeLabel] <= high) ?
+        while (orphan && orphan[this.timeLabel] >= low && orphan[this.timeLabel] <= high) {
+          removedOrphans.push(orphan);
+          this.orphans.remove(orphan);
+          orphan = this.orphans.lowerBound({ [this.timeLabel]: low }).next();
+        }
+
+        this.pushInterval(intervalValue);
+        // if (removedOrphans.length)
+        //   console.log("removed orphans", removedOrphans, "because they intersect", intervalValue, low, high);
+        this.update();
+      }
     } catch (e) {
-      console.log("Failed getting logs", e);
+      console.info("@tty-pt/logs Logs.getLogs caught:", e);
     }
     setTimeout(() => this.getLogs(), this.restInterval);
   }
 
   get() {
     let total = [];
-    if (!this.lastInterval.length)
-      return [];
+		const intervalIterator = this.tree.iterate();
+		const binaryIterator = this.orphans.iterator();
 
-    for (const innerInterval of this.tree.iterate())
-      total = innerInterval.concat(total);
+    let intervalItem = intervalIterator.next();
+    let binaryItem = binaryIterator.next();
+
+		while (binaryItem && !intervalItem.done) {
+      if (intervalItem.done || !(intervalItem.value[0][this.timeLabel] <= binaryItem[this.timeLabel])) {
+        total.unshift(binaryItem);
+        binaryItem = binaryIterator.next();
+      } else {
+        total = intervalItem.value.concat(total);
+        intervalItem = intervalIterator.next();
+      }
+    }
+
+    while (binaryItem) {
+      total.unshift(binaryItem);
+      binaryItem = binaryIterator.next();
+    }
+
+    while (!intervalItem.done) {
+			total = intervalItem.value.concat(total);
+			intervalItem = intervalIterator.next();
+		}
 
     return total;
   }
@@ -228,7 +280,7 @@ export default class Logs {
   }
 
   getKey(interval) {
-    return [interval[interval.length - 1].timestamp, interval[0].timestamp];
+    return [interval[interval.length - 1][this.timeLabel], interval[0][this.timeLabel]];
   }
 
   setLastInterval(interval, intervalKey) {
@@ -300,10 +352,7 @@ export default class Logs {
 
     const allAbsent = await Promise.all(
       absentIntervals.map((interval) =>
-        this._getLogs({
-          fromDate: interval[0],
-          toDate: interval[1],
-        }).then((logs) => [interval, logs]),
+        this._getLogs(interval[0], interval[1]).then((logs) => [interval, logs]),
       ),
     );
 
@@ -322,19 +371,25 @@ export default class Logs {
       [key]: argQuery[key] ?? value.default,
     }), {});
 
-    return this.get().filter((item) => {
+    const filterC = {};
+
+    const ret = this.get().filter((item) => {
       for (const key in this.fields) {
         const field = this.fields[key];
         const filterType = field.type ?? key;
         const fieldKey = field.key ?? key;
-        if (!(
+        const filterFine = (
           this.types[filterType]?.filter ?? filterIdentity
-        )(item[key], query[fieldKey], item)) {
+        )(item[key], query[fieldKey], item);
+
+        filterC[key] = (filterC[key] ?? 0) + (filterFine ? 1 : 0);
+        if (!filterFine)
           return false;
-        }
       }
       return true;
     });
+
+    return ret;
   }
 
   collectIntersections(intervalKey) {
@@ -419,7 +474,7 @@ export default class Logs {
       )
         value = value.slice(0, MAX_FETCH_LOGS);
 
-      key[0] = value[value.length - 1].timestamp;
+      key[0] = value[value.length - 1][this.timeLabel];
     }
 
     this.setLastInterval(value, key);
@@ -438,27 +493,83 @@ export default class Logs {
     }
   }
 
+  delOrphans(orphanString) {
+    const orphanQuery = this.orphanQueries[orphanString];
+
+    if (orphanQuery.subs > 0)
+      return;
+
+    console.log("delOrphans empty?", orphanString, orphanQuery.subs, orphanQuery.list);
+
+    const orphans = orphanQuery.list;
+
+    if (orphans && orphans.length)
+      for (const orphan in orphans)
+        this.orphans.remove(orphan);
+
+    delete this.orphanQueries[orphanString];
+  }
+
+  delSubscriptionOrphans(orphanString) {
+    this.orphanQueries[orphanString].subs--;
+    setTimeout(() => this.delOrphans(orphanString), 1000);
+  }
+
+  async fetchOrphans(fromDate, toDate, orphanString) {
+    const orphans = await this._getLogs(fromDate, toDate, orphanString);
+    const orphanQuery = this.orphanQueries[orphanString];
+
+    // // cancel if subscription was removed meanwhile
+    // if (!orphanQuery || orphanQuery.subs <= 0 || orphanQuery.list?.length)
+    //   return;
+
+    console.log("fetchOrphans", fromDate, toDate, orphanString, orphanQuery, orphanQuery.subs, orphanQuery.list, orphans);
+    for (const orphan of orphans) {
+      const time = orphan[this.timeLabel];
+      if (!this.tree.intersect_any([time, time]))
+        this.orphans.insert(orphan);
+    }
+
+    this.orphanQueries[orphanString].list = orphans;
+    this.update();
+  }
+
   subscribe(callback, outerQuery = {}) {
-    const { fromDate, toDate, limit } = outerQuery;
+    let { fromDate, toDate, limit, ...rest } = outerQuery;
 
     if (!limit)
       this.unbound++;
 
-    this.fetchAbsent(fromDate, toDate);
+		const key = [
+			fromDate ? fromDate.getTime() : this.beginning,
+			(toDate ? toDate.getTime() : null) || END_TIMES,
+		];
+		let orphanString;
 
-    const key = [
-      fromDate ? fromDate.getTime() : this.beginning,
-      (toDate ? toDate.getTime() : null) || END_TIMES,
-    ];
+    if (Object.keys(rest).length) {
+      orphanString = this.getParamString(rest);
 
-    this.putSubscriptionInterval(key);
+      if (!this.orphanQueries[orphanString])
+        this.fetchOrphans(fromDate, toDate, orphanString);
+
+      const orphanQuery = this.orphanQueries[orphanString] ?? { subs: 0 };
+      orphanQuery.subs++;
+      this.orphanQueries[orphanString] = orphanQuery;
+    } else {
+      this.fetchAbsent(fromDate, toDate);
+      this.putSubscriptionInterval(key);
+    }
 
     this.subs.set(callback, true);
     return () => {
       if (!limit)
         this.unbound--;
 
-      this.delSubscriptionInterval(key);
+      if (!orphanString)
+        this.delSubscriptionOrphans(orphanString);
+      else
+        this.delSubscriptionInterval(key);
+
       this.subs.delete(callback);
     };
   }
@@ -467,7 +578,7 @@ export default class Logs {
     const logs = this.get();
 
     if (logs.length)
-      this.beginning = logs[logs.length - 1].timestamp;
+      this.beginning = logs[logs.length - 1][this.timeLabel];
 
     if (
       this.beginning !== -END_TIMES &&

@@ -28,10 +28,12 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "bintrees": "^1.0.2",
     "@flatten-js/interval-tree": "^1.1.3",
     "@tty-pt/scripts": "^0.6.9"
   },
   "peerDependencies": {
+    "bintrees": "^1.0.2",
     "@flatten-js/interval-tree": "^1.1.3"
   }
 }
