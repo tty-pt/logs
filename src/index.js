@@ -121,8 +121,8 @@ export default class Logs {
     this.streamUrl = streamUrl;
     this.stream = stream;
     this.fields = {
-      fromDate: {},
-      toDate: {},
+      fromDate: { key: timeLabel },
+      toDate: { key: timeLabel },
       limit: {},
       ...fields,
     };
@@ -159,16 +159,17 @@ export default class Logs {
     return Object.entries(this.fields).map(
       ([key, field]) => (
         this.types[field.type ?? key]?.unparse ?? unparseIdentity
-      )(key, params[field.key ?? key])
+      )(key, params[key])
     ).filter((a) => !!a).join("&");
   }
 
   async _getLogs(fromDate, toDate, orphanString = "") {
-    const paramPrefix = this.getParamString({
+    const param = {
       ...(orphanString ? {} : { limit: this.limit }),
       fromDate,
       toDate,
-    });
+    };
+    const paramPrefix = this.getParamString(param);
     const path = this.url + "?" + paramPrefix
       + (paramPrefix && orphanString ? "&" : "")
       + orphanString;
@@ -211,7 +212,7 @@ export default class Logs {
         let orphan = this.orphans.lowerBound({ [this.timeLabel]: low }).next();
 
         // remove orphans intersecting interval
-        if (orphan[this.timeLabel] >= low)
+        if (orphan && orphan[this.timeLabel] >= low)
           while (orphan && orphan[this.timeLabel] <= high) {
             removedOrphans.push(orphan);
             this.orphans.remove(orphan);
@@ -375,8 +376,6 @@ export default class Logs {
       [key]: argQuery[key] ?? value.default,
     }), {});
 
-    const filterC = {};
-
     const ret = this.get().filter((item) => {
       for (const key in this.fields) {
         const field = this.fields[key];
@@ -384,9 +383,8 @@ export default class Logs {
         const fieldKey = field.key ?? key;
         const filterFine = (
           this.types[filterType]?.filter ?? filterIdentity
-        )(item[key], query[fieldKey], item);
+        )(item[fieldKey], query[key], item);
 
-        filterC[key] = (filterC[key] ?? 0) + (filterFine ? 1 : 0);
         if (!filterFine)
           return false;
       }
@@ -545,6 +543,7 @@ export default class Logs {
 			fromDate ? fromDate.getTime() : this.beginning,
 			(toDate ? toDate.getTime() : null) || END_TIMES,
 		];
+
 		let orphanString;
 
     if (Object.keys(rest).length) {
