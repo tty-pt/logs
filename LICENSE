@@ -1,0 +1,20 @@
+Copyright 2025 Mov.ai (By Paulo Quirino)
+
+This project is based on work I authored during my time at Mov.ai under a POC branch.
+The original work referenced the ISC license in its `package.json` file, which still applies.
+The orphans functionality (BST) is made on my free time and might be considered derivative work.
+
+NOTE: Mov.ai retains all rights to the original work authored as part of my employment.
+This adaptation and further developments are provided under the same ISC license terms.
+
+NOTE: These terms are subject to revision only if Mov.ai formally requests adjustments
+to address ownership or licensing concerns related to the original work.
+
+This library is released as open-source software under the ISC license.
+Users are encouraged to comply with the terms outlined here and to report any issues or concerns.
+
+Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted, provided that the above copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED “AS IS” AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+For any issues or concerns regarding this software or its licensing, please contact quirinpa@gmail.com.

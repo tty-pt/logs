@@ -1,12 +1,17 @@
 {
   "name": "@tty-pt/logs",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "",
   "main": "cjs/index.js",
   "browser": "web/index.js",
   "module": "esm/index.js",
   "entry": "src/index.js",
   "library": "ttyLogs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tty-pt/logs.git"
+  },
+  "author": "MOV.AI",
   "exports": {
     ".": {
       "import": "./esm/index.js",
@@ -22,9 +27,10 @@
     "cjs",
     "web",
     "esm",
-    "types"
+    "types",
+    "LICENSE"
   ],
-  "keywords": [],
+  "keywords": ["logs"],
   "author": "",
   "license": "ISC",
   "devDependencies": {
