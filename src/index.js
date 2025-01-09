@@ -1,7 +1,7 @@
 import IntervalTree from "@flatten-js/interval-tree";
 import { BinTree } from "bintrees";
 
-const MAX_FETCH_LOGS = 20000;
+const MAX_FETCH_LOGS = 5000;
 const END_TIMES = 8640000000000000;
 const WHOLE_TIME = [-END_TIMES, END_TIMES];
 
@@ -189,10 +189,10 @@ export default class Logs {
     this.update();
 
     if (this.stream) {
-      const sock = this.streamOpen();
+      const sock = this.streamOpen(this.streamUrl);
       sock.onmessage = (msg) => {
         const item = this.streamTransform(msg);
-        this.pushInterval([this.transform(item, 0, [item], true)], true);
+        this.pushInterval([this.transform(item, 0, [item], true)]);
         this.update();
       };
 
@@ -202,12 +202,9 @@ export default class Logs {
     else this.getLogs();
   }
 
-  removeIntersectingOrphans(intervalValue) {
-    if (!intervalValue.length)
-      return;
-
+  removeIntersectingOrphans(intervalKey) {
     const removedOrphans = [];
-    const [low, high] = this.getKey(intervalValue);
+    const [low, high] = intervalKey;
     let lastLow = low;
     let orphan = this.orphans.lowerBound({ [this.timeLabel]: lastLow }).data();
 
@@ -219,18 +216,20 @@ export default class Logs {
       orphan = this.orphans.lowerBound({ [this.timeLabel]: lastLow }).data();
     }
 
-    if (removedOrphans.length)
-      console.log("removed orphans", low, high, removedOrphans);
+    // if (removedOrphans.length)
+    //   console.log("removed orphans", low, high, removedOrphans);
   }
 
   async getLogs() {
     try {
-      const intervalValue = await this._getLogs(this.getLastTo(), null);
+      if (!this.fetchAbsentController) {
+        const intervalValue = await this._getLogs(this.getLastTo(), null);
 
-      if (intervalValue.length) {
-        this.pushInterval(intervalValue);
-        this.removeIntersectingOrphans(intervalValue);
-        this.update();
+        if (intervalValue.length) {
+          this.pushInterval(intervalValue);
+          this.removeIntersectingOrphans(this.getKey(intervalValue));
+          this.update();
+        }
       }
     } catch (e) {
       console.info("@tty-pt/logs Logs.getLogs caught:", e);
@@ -271,12 +270,13 @@ export default class Logs {
     return total;
   }
 
-  getAbsentIntervals(fromTime, toTime = this.lastIntervalKey?.[1]) {
-    if (!fromTime)
+  getAbsentIntervals(fromTime, toTime = this.lastIntervalKey?.[0]) {
+    if (!fromTime || fromTime === this.lastIntervalKey[0])
       return [];
 
     let absentStart = fromTime;
     const absentTimes = [];
+    const presentTimes = [];
 
     for (const innerKey of this.tree.iterate(
       [fromTime, toTime],
@@ -285,12 +285,16 @@ export default class Logs {
       const { low, high } = innerKey;
 
       if (absentStart < low)
-        absentTimes.push([absentStart, low]);
+        absentTimes.push([absentStart, low, innerKey]);
+      else
+        presentTimes.push([low, high]);
       absentStart = high;
     }
 
     if (absentStart < toTime)
       absentTimes.push([absentStart, toTime]);
+
+    // console.log("absent", absentTimes, "present", presentTimes, fromTime, this.getLastFrom());
     return absentTimes;
   }
 
@@ -299,20 +303,32 @@ export default class Logs {
   }
 
   setLastInterval(interval, intervalKey) {
-    if (this.lastInterval.length)
+    if (!this.tree.isEmpty())
       this.tree.remove(this.lastIntervalKey, this.lastInterval);
 
     this.lastInterval = interval;
-    this.lastIntervalKey = intervalKey ?? this.getKey(interval);
+    this.lastIntervalKey = intervalKey;
     this.tree.insert(this.lastIntervalKey, interval);
   }
 
   shiftInterval(interval) {
-    this.setLastInterval(this.lastInterval.concat(interval));
+    if (!interval.length)
+      return;
+    const key = this.getKey(interval);
+    this.setLastInterval(this.lastInterval.concat(interval), [
+      key[0],
+      this.tree.isEmpty ? key[1] : this.getLastTo(),
+    ]);
   }
 
   pushInterval(interval) {
-    this.setLastInterval(interval.concat(this.lastInterval));
+    if (!interval.length)
+      return;
+    const key = this.getKey(interval);
+    this.setLastInterval(interval.concat(this.lastInterval), [
+      this.tree.isEmpty() ? key[0] : this.getLastFrom(),
+      key[1],
+    ]);
   }
 
   getFormattedKey(intervalKey) {
@@ -330,56 +346,86 @@ export default class Logs {
     )) {
       this.tree.remove(key);
 
-      if (key.high === fromDate)
+      if (key.high === fromDate) {
         return this.tree.insert(
           [key.low, toDate],
           interval.concat(innerInterval),
         );
+      }
 
       if (key.low === toDate) {
-        const possiblyLastKey = [fromDate, key.high];
+        const possiblyLastKey = [interval.length ? this.getKey(interval)[0] : fromDate, key.high];
         const possiblyLast = innerInterval.concat(interval);
 
-        if (innerInterval === this.lastInterval)
+        if (key.high === this.lastIntervalKey[1])
           return this.setLastInterval(possiblyLast, possiblyLastKey, false);
 
         return this.tree.insert(possiblyLastKey, possiblyLast);
       }
     }
 
-    if (intervalKey[1] === this.lastIntervalKey[1])
-      this.tree.insert(intervalKey, interval);
+    if (this.lastIntervalKey[0] === toDate) {
+      const possiblyLastKey = [interval.length ? this.getKey(interval)[0] : fromDate, this.lastIntervalKey[1]];
+      const possiblyLast = this.lastInterval.concat(interval);
+      return this.setLastInterval(possiblyLast, possiblyLastKey, false);
+    } else
+        return this.tree.insert(intervalKey, interval);
   }
 
-  async fetchAbsent(fromDate, toDate) {
-    if (this.fetchingAbsent)
-      return;
-
+  async fetchAbsent(fromDate, toDate, level) {
     fromDate = fromDate ? fromDate.getTime() : null;
     toDate = (toDate ? toDate.getTime() : null) || this.getLastFrom();
 
     const absentIntervals = this.getAbsentIntervals(fromDate, toDate);
 
-    if (!absentIntervals.length)
+    if (!absentIntervals.length) {
+      if (level === 0)
+        delete this.fetchAbsentController;
       return;
+    }
 
-    this.fetchingAbsent = true;
+    if (level === 0)
+      this.fetchAbsentController = new AbortController();
 
     const allAbsent = await Promise.all(
       absentIntervals.map((interval) =>
-        this._getLogs(interval[0], interval[1]).then((logs) => [interval, logs]),
+        this._getLogs(interval[0], interval[1], undefined, true).then((logs) => [interval, logs]),
       ),
     );
 
+    if (!this.fetchAbsentController || this.fetchAbsentController.signal.aborted)
+      return;
+
+    let absentFrom = fromDate;
+    const newAbsent = [];
+    let update = false;
+
     for (const [key, absent] of allAbsent) {
-      this.insertAbsent(key, absent);
-      this.removeIntersectingOrphans(absent);
+      if (absent.length) {
+        const [realFrom, realTo] = this.getKey(absent);
+        if (realFrom > absentFrom)
+          newAbsent.push([absentFrom, realFrom]);
+        absentFrom = realTo;
+        update = true;
+      } else
+        absentFrom = key[1];
     }
 
-    if (allAbsent.length)
+    if (toDate > absentFrom)
+      newAbsent.push([absentFrom, toDate]);
+
+    for (const [key, absent] of allAbsent) {
+      this.insertAbsent(key, absent);
+      if (absent.length)
+        this.removeIntersectingOrphans(this.getKey(absent));
+    }
+
+    if (update)
       this.update();
 
-    this.fetchingAbsent = false;
+    await Promise.all(newAbsent.map(([from, to]) => this.fetchAbsent(new Date(from), new Date(to), level + 1)));
+    if (level === 0)
+      delete this.fetchAbsentController;
   }
 
   filter(argQuery = {}) {
@@ -503,7 +549,7 @@ export default class Logs {
       if (value - 1 > 0)
         this.subscriptionTree.insert(key, value - 1);
       else
-        setTimeout(() => this.delIntervals([key.low, key.high]), 0);
+        this.delIntervals([key.low, key.high]);
     }
   }
 
@@ -524,7 +570,7 @@ export default class Logs {
 
   delSubscriptionOrphans(orphanString) {
     this.orphanQueries[orphanString].subs--;
-    setTimeout(() => this.delOrphans(orphanString), 1000);
+    this.delOrphans(orphanString);
   }
 
   async fetchOrphans(fromDate, toDate, orphanString) {
@@ -551,6 +597,12 @@ export default class Logs {
     if (!limit)
       this.unbound++;
 
+    if (this.delSubIntTimeout)
+      clearTimeout(this.delSubIntTimeout);
+
+    if (this.delSubOrpTimeout)
+      clearTimeout(this.delSubOrpTimeout);
+
 		const key = [
 			fromDate ? fromDate.getTime() : this.beginning,
 			(toDate ? toDate.getTime() : null) || END_TIMES,
@@ -568,7 +620,9 @@ export default class Logs {
       orphanQuery.subs++;
       this.orphanQueries[orphanString] = orphanQuery;
     } else {
-      this.fetchAbsent(fromDate, toDate);
+      if (fromDate < this.getLastFrom() && !this.fetchAbsentController) {
+        this.fetchAbsent(fromDate, toDate, 0);
+      }
       this.putSubscriptionInterval(key);
     }
 
@@ -578,9 +632,9 @@ export default class Logs {
         this.unbound--;
 
       if (orphanString)
-        this.delSubscriptionOrphans(orphanString);
+        this.delSubOrpTimeout = setTimeout(() => this.delSubscriptionOrphans(orphanString), 0);
       else
-        this.delSubscriptionInterval(key);
+        this.delSubIntTimeout = setTimeout(() => this.delSubscriptionInterval(key), 0);
 
       this.subs.delete(callback);
     };
