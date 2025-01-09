@@ -211,7 +211,7 @@ export default class Logs {
         let orphan = this.orphans.lowerBound({ [this.timeLabel]: low }).next();
 
         // remove orphans intersecting interval
-        if (orphan[this.timeLabel] >= low)
+        if (orphan && orphan[this.timeLabel] >= low)
           while (orphan && orphan[this.timeLabel] <= high) {
             removedOrphans.push(orphan);
             this.orphans.remove(orphan);

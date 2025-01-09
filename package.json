@@ -1,6 +1,6 @@
 {
   "name": "@tty-pt/logs",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "",
   "main": "cjs/index.js",
   "browser": "web/index.js",
@@ -12,6 +12,7 @@
     "url": "https://github.com/tty-pt/logs.git"
   },
   "author": "MOV.AI",
+  "license": "ISC",
   "exports": {
     ".": {
       "import": "./esm/index.js",
@@ -31,8 +32,6 @@
     "LICENSE"
   ],
   "keywords": ["logs"],
-  "author": "",
-  "license": "ISC",
   "devDependencies": {
     "bintrees": "^1.0.2",
     "@flatten-js/interval-tree": "^1.1.3",
