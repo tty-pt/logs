@@ -202,26 +202,34 @@ export default class Logs {
     else this.getLogs();
   }
 
+  removeIntersectingOrphans(intervalValue) {
+    if (!intervalValue.length)
+      return;
+
+    const removedOrphans = [];
+    const [low, high] = this.getKey(intervalValue);
+    let lastLow = low;
+    let orphan = this.orphans.lowerBound({ [this.timeLabel]: lastLow }).data();
+
+    // remove orphans intersecting interval
+    while (orphan && orphan[this.timeLabel] <= high) {
+      removedOrphans.push([orphan, lastLow, orphan[this.timeLabel]]);
+      lastLow = orphan[this.timeLabel];
+      this.orphans.remove(orphan);
+      orphan = this.orphans.lowerBound({ [this.timeLabel]: lastLow }).data();
+    }
+
+    if (removedOrphans.length)
+      console.log("removed orphans", low, high, removedOrphans);
+  }
+
   async getLogs() {
     try {
       const intervalValue = await this._getLogs(this.getLastTo(), null);
-      const removedOrphans = [];
 
       if (intervalValue.length) {
-        const [low, high] = this.getKey(intervalValue);
-        let orphan = this.orphans.lowerBound({ [this.timeLabel]: low }).next();
-
-        // remove orphans intersecting interval
-        if (orphan && orphan[this.timeLabel] >= low)
-          while (orphan && orphan[this.timeLabel] <= high) {
-            removedOrphans.push(orphan);
-            this.orphans.remove(orphan);
-            orphan = this.orphans.lowerBound({ [this.timeLabel]: low }).next();
-          }
-
         this.pushInterval(intervalValue);
-        if (removedOrphans.length)
-          console.log("removed orphans", removedOrphans);
+        this.removeIntersectingOrphans(intervalValue);
         this.update();
       }
     } catch (e) {
@@ -239,8 +247,10 @@ export default class Logs {
     let binaryItem = binaryIterator.next();
 
 		while (binaryItem && !intervalItem.done) {
-      if (intervalItem.done || !(intervalItem.value[0][this.timeLabel] <= binaryItem[this.timeLabel])) {
-        total.unshift(binaryItem);
+      if (intervalItem.done || !(
+        intervalItem.value[0][this.timeLabel] <= binaryItem[this.timeLabel]
+      )) {
+        total.push(binaryItem);
         binaryItem = binaryIterator.next();
       } else {
         total = intervalItem.value.concat(total);
@@ -361,8 +371,10 @@ export default class Logs {
       ),
     );
 
-    for (const [key, absent] of allAbsent)
+    for (const [key, absent] of allAbsent) {
       this.insertAbsent(key, absent);
+      this.removeIntersectingOrphans(absent);
+    }
 
     if (allAbsent.length)
       this.update();
@@ -498,7 +510,7 @@ export default class Logs {
   delOrphans(orphanString) {
     const orphanQuery = this.orphanQueries[orphanString];
 
-    if (orphanQuery.subs > 0)
+    if (!orphanQuery || orphanQuery.subs > 0)
       return;
 
     const orphans = orphanQuery.list;
@@ -546,7 +558,7 @@ export default class Logs {
 
 		let orphanString;
 
-    if (Object.keys(rest).length) {
+    if (limit) {
       orphanString = this.getParamString({ limit: limit || this.limit, ...rest });
 
       if (!this.orphanQueries[orphanString])
@@ -565,7 +577,7 @@ export default class Logs {
       if (!limit)
         this.unbound--;
 
-      if (!orphanString)
+      if (orphanString)
         this.delSubscriptionOrphans(orphanString);
       else
         this.delSubscriptionInterval(key);
