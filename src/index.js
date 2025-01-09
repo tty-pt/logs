@@ -164,7 +164,11 @@ export default class Logs {
   }
 
   async _getLogs(fromDate, toDate, orphanString = "") {
-    const paramPrefix = this.getParamString({ limit: this.limit, fromDate, toDate });
+    const paramPrefix = this.getParamString({
+      ...(orphanString ? {} : { limit: this.limit }),
+      fromDate,
+      toDate,
+    });
     const path = this.url + "?" + paramPrefix
       + (paramPrefix && orphanString ? "&" : "")
       + orphanString;
@@ -499,8 +503,6 @@ export default class Logs {
     if (orphanQuery.subs > 0)
       return;
 
-    console.log("delOrphans empty?", orphanString, orphanQuery.subs, orphanQuery.list);
-
     const orphans = orphanQuery.list;
 
     if (orphans && orphans.length)
@@ -519,11 +521,10 @@ export default class Logs {
     const orphans = await this._getLogs(fromDate, toDate, orphanString);
     const orphanQuery = this.orphanQueries[orphanString];
 
-    // // cancel if subscription was removed meanwhile
-    // if (!orphanQuery || orphanQuery.subs <= 0 || orphanQuery.list?.length)
-    //   return;
+    // cancel if subscription was removed meanwhile
+    if (!orphanQuery || orphanQuery.subs <= 0 || orphanQuery.list?.length)
+      return;
 
-    console.log("fetchOrphans", fromDate, toDate, orphanString, orphanQuery, orphanQuery.subs, orphanQuery.list, orphans);
     for (const orphan of orphans) {
       const time = orphan[this.timeLabel];
       if (!this.tree.intersect_any([time, time]))
@@ -547,7 +548,7 @@ export default class Logs {
 		let orphanString;
 
     if (Object.keys(rest).length) {
-      orphanString = this.getParamString(rest);
+      orphanString = this.getParamString({ limit: limit || this.limit, ...rest });
 
       if (!this.orphanQueries[orphanString])
         this.fetchOrphans(fromDate, toDate, orphanString);
