@@ -144,6 +144,7 @@ export default class Logs {
     this.subscriptionTree = new IntervalTree();
     this.orphans = new BinTree((a, b) => a[this.timeLabel] - b[this.timeLabel]);
     this.orphanQueries = {};
+    this.absentControllers = {};
     this.refresh();
   }
 
@@ -222,7 +223,7 @@ export default class Logs {
 
   async getLogs() {
     try {
-      if (!this.fetchAbsentController) {
+      if (!Object.keys(this.absentControllers).length) {
         const intervalValue = await this._getLogs(this.getLastTo(), null);
 
         if (intervalValue.length) {
@@ -372,28 +373,25 @@ export default class Logs {
         return this.tree.insert(intervalKey, interval);
   }
 
-  async fetchAbsent(fromDate, toDate, level) {
-    fromDate = fromDate ? fromDate.getTime() : null;
-    toDate = (toDate ? toDate.getTime() : null) || this.getLastFrom();
-
+  async fetchAbsent(fromDate, toDate, level, orphanString) {
     const absentIntervals = this.getAbsentIntervals(fromDate, toDate);
 
     if (!absentIntervals.length) {
       if (level === 0)
-        delete this.fetchAbsentController;
+        delete this.absentControllers[orphanString];
       return;
     }
 
     if (level === 0)
-      this.fetchAbsentController = new AbortController();
+      this.absentControllers[orphanString] = new AbortController();
 
     const allAbsent = await Promise.all(
       absentIntervals.map((interval) =>
-        this._getLogs(interval[0], interval[1], undefined, true).then((logs) => [interval, logs]),
+        this._getLogs(interval[0], interval[1], orphanString, true).then((logs) => [interval, logs]),
       ),
     );
 
-    if (!this.fetchAbsentController || this.fetchAbsentController.signal.aborted)
+    if (!this.absentControllers[orphanString] || this.absentControllers[orphanString].signal.aborted)
       return;
 
     let absentFrom = fromDate;
@@ -423,9 +421,9 @@ export default class Logs {
     if (update)
       this.update();
 
-    await Promise.all(newAbsent.map(([from, to]) => this.fetchAbsent(new Date(from), new Date(to), level + 1)));
+    await Promise.all(newAbsent.map(([from, to]) => this.fetchAbsent(from, to, level + 1, orphanString)));
     if (level === 0)
-      delete this.fetchAbsentController;
+      delete this.absentControllers[orphanString];
   }
 
   filter(argQuery = {}) {
@@ -574,6 +572,7 @@ export default class Logs {
   }
 
   async fetchOrphans(fromDate, toDate, orphanString) {
+    // console.log("fetchOrphans", fromDate, toDate, orphanString);
     const orphans = await this._getLogs(fromDate, toDate, orphanString);
     const orphanQuery = this.orphanQueries[orphanString];
 
@@ -610,19 +609,21 @@ export default class Logs {
 
 		let orphanString;
 
-    if (limit) {
-      orphanString = this.getParamString({ limit: limit || this.limit, ...rest });
+    orphanString = this.getParamString({ limit: limit || this.limit, ...rest });
 
-      if (!this.orphanQueries[orphanString])
-        this.fetchOrphans(fromDate, toDate, orphanString);
+    if (!this.orphanQueries[orphanString])
+      this.fetchOrphans(fromDate, toDate, orphanString);
 
-      const orphanQuery = this.orphanQueries[orphanString] ?? { subs: 0 };
-      orphanQuery.subs++;
-      this.orphanQueries[orphanString] = orphanQuery;
-    } else {
-      if (fromDate < this.getLastFrom() && !this.fetchAbsentController) {
-        this.fetchAbsent(fromDate, toDate, 0);
-      }
+    const orphanQuery = this.orphanQueries[orphanString] ?? { subs: 0 };
+    orphanQuery.subs++;
+    this.orphanQueries[orphanString] = orphanQuery;
+
+    if (!limit) {
+      // if fetching a non-limited interval but with a fromDate,
+      // we want to fill in the missing spaces (because there still
+      // might be a limit in the results)
+      if (fromDate < this.getLastFrom() && !this.absentControllers[orphanString])
+        this.fetchAbsent(fromDate ? fromDate.getTime() : null, (toDate ? toDate.getTime() : this.getLastFrom()), 0, orphanString);
       this.putSubscriptionInterval(key);
     }
 
@@ -631,9 +632,9 @@ export default class Logs {
       if (!limit)
         this.unbound--;
 
-      if (orphanString)
-        this.delSubOrpTimeout = setTimeout(() => this.delSubscriptionOrphans(orphanString), 0);
-      else
+      this.delSubOrpTimeout = setTimeout(() => this.delSubscriptionOrphans(orphanString), 0);
+
+      if (!limit)
         this.delSubIntTimeout = setTimeout(() => this.delSubscriptionInterval(key), 0);
 
       this.subs.delete(callback);
