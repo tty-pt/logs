@@ -6,7 +6,7 @@ const END_TIMES = 8640000000000000;
 const WHOLE_TIME = [-END_TIMES, END_TIMES];
 
 function unparseList(label, values) {
-  const keys = Object.keys(values ?? {});
+  const keys = Object.entries(values ?? {}).filter(([_key, value]) => value).map(([key]) => key);
   return keys.length
     ? label + "=" + keys.join(",")
     : "";
