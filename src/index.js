@@ -560,8 +560,12 @@ export default class Logs {
     const orphans = orphanQuery.list;
 
     if (orphans && orphans.length)
-      for (const orphan in orphans)
-        this.orphans.remove(orphan);
+      for (const orphan in orphans) {
+        const treeOrphan = this.findExistingOrphan(orphan);
+        treeOrphan.subs--;
+        if (treeOrphan.subs <= 0)
+          this.orphans.remove(orphan);
+      }
 
     delete this.orphanQueries[orphanString];
   }
@@ -569,6 +573,29 @@ export default class Logs {
   delSubscriptionOrphans(orphanString) {
     this.orphanQueries[orphanString].subs--;
     this.delOrphans(orphanString);
+  }
+
+  findExistingOrphan(similarOne) {
+    const it = this.orphans.lowerBound(similarOne);
+    let node = it.data();
+
+    while (node && node[this.timeLabel] === similarOne[this.timeLabel]) {
+      let differs = false;
+      const a = { ...node };
+      delete a.subs;
+
+      for (const [key, value] in Object.entries(a))
+        if (similarOne[key] !== value) {
+          differs = true;
+          node = it.next(node); // Move to the next node in the tree
+          break;
+        }
+
+      if (!differs)
+        return node;
+    }
+
+    return null;
   }
 
   async fetchOrphans(fromDate, toDate, orphanString) {
@@ -582,8 +609,14 @@ export default class Logs {
 
     for (const orphan of orphans) {
       const time = orphan[this.timeLabel];
-      if (!this.tree.intersect_any([time, time]))
-        this.orphans.insert(orphan);
+      if (this.tree.intersect_any([time, time]))
+        continue;
+
+      const existingOrphan = this.findExistingOrphan(orphan);
+      if (existingOrphan)
+        existingOrphan.subs ++;
+      else
+        this.orphans.insert({ ...orphan, subs: 1 });
     }
 
     this.orphanQueries[orphanString].list = orphans;
