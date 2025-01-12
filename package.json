@@ -1,6 +1,6 @@
 {
   "name": "@tty-pt/logs",
-  "version": "0.0.15",
+  "version": "0.0.20",
   "description": "",
   "main": "cjs/index.js",
   "browser": "web/index.js",
