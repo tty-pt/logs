@@ -275,9 +275,9 @@ export default class Logs {
 
 		while (binaryItem && !intervalItem.done) {
       if (intervalItem.done || !(
-        intervalItem.value[0][this.timeLabel] <= binaryItem[this.timeLabel]
+        intervalItem.value.slice(-1)[0][this.timeLabel] <= binaryItem[this.timeLabel]
       )) {
-        total.push(binaryItem);
+        total.unshift(binaryItem);
         binaryItem = binaryIterator.next();
       } else {
         total = intervalItem.value.concat(total);
@@ -592,6 +592,8 @@ export default class Logs {
     if (orphans && orphans.length)
       for (const orphan in orphans) {
         const treeOrphan = this.findExistingOrphan(orphan);
+        if (!treeOrphan)
+          continue;
         treeOrphan.subs--;
         if (treeOrphan.subs <= 0)
           this.orphans.remove(orphan);
@@ -601,7 +603,6 @@ export default class Logs {
   }
 
   delSubscriptionOrphans(orphanString) {
-    this.orphanQueries[orphanString].subs--;
     this.delOrphans(orphanString);
   }
 
@@ -695,6 +696,7 @@ export default class Logs {
       if (!limit)
         this.unbound--;
 
+      this.orphanQueries[orphanString].subs--;
       this.delSubOrpTimeout = setTimeout(() => this.delSubscriptionOrphans(orphanString), 0);
 
       if (!limit)
