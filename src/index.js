@@ -206,8 +206,9 @@ export default class Logs {
     if (this.stream) {
       const sock = this.streamOpen(this.streamUrl);
       sock.onmessage = (msg) => {
-        const item = this.streamTransform(msg);
-        this.pushInterval([this.transform(item, 0, [item], true)]);
+        const streamItem = this.streamTransform(msg);
+        const item = this.transform(streamItem, 0, [streamItem], true);
+        this.pushInterval([item]);
         this.update(item[this.timeLabel], item[this.timeLabel], item);
       };
 
